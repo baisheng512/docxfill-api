@@ -59,6 +59,34 @@ class FillRequest(BaseModel):
         return "" if v is None else v
 
 
+def normalize_data(excel_rows):
+    """将竖向格式(字段名/值)转为横向格式"""
+    if not excel_rows or not isinstance(excel_rows, list):
+        return {}
+    
+    # 检查是否竖向格式（每行有"字段名"和"值"两个键）
+    first_row = excel_rows[0]
+    if "字段名" in first_row and "值" in first_row:
+        result = {}
+        for row in excel_rows:
+            key = str(row.get("字段名", "")).strip()
+            val = row.get("值")
+            if key and val is not None:
+                result[key] = val
+        return result
+    
+    # 横向格式，合并多行数据
+    data = excel_rows[0]
+    for row in excel_rows[1:]:
+        if isinstance(row, dict):
+            for k, v in row.items():
+                if k not in data and not k.startswith("__EMPTY") and not k.startswith("col_"):
+                    data[k] = v
+    # 过滤无意义列
+    data = {k: v for k, v in data.items() if not k.startswith("__EMPTY") and not k.startswith("col_")}
+    return data
+
+
 def parse_config(percent_str, thousand_str, mapping_str):
     """解析传入的配置字符串"""
     percent_str = percent_str or ""
@@ -246,12 +274,7 @@ async def fill_template(request: FillRequest):
     if not excel_rows or not isinstance(excel_rows, list):
         return {"success": False, "message": "excel_data必须是非空数组", "replaced_count": 0, "file_id": ""}
 
-    data = excel_rows[0]
-    for row in excel_rows[1:]:
-        if isinstance(row, dict):
-            for k, v in row.items():
-                if k not in data:
-                    data[k] = v
+    data = normalize_data(excel_rows)
 
     doc = Document(io.BytesIO(resp.content))
     count = replace_in_doc(doc, data, percent_fields, thousand_sep_fields, field_mapping)
