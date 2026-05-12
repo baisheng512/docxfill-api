@@ -243,3 +243,93 @@ async def download_file(file_id: str):
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/coze-openapi.json")
+async def coze_openapi():
+    """返回Coze兼容的OpenAPI 3.0.0文档"""
+    return {
+      "openapi": "3.0.0",
+      "info": {
+        "title": "DocxFill API",
+        "description": "Word模板占位符替换服务，保留原格式",
+        "version": "1.0.0"
+      },
+      "servers": [
+        {"url": "https://docxfill-api-production.up.railway.app"}
+      ],
+      "paths": {
+        "/fill": {
+          "post": {
+            "summary": "替换Word模板占位符",
+            "description": "接收Word模板URL和Excel JSON数据，替换占位符后返回文件ID",
+            "operationId": "fill_template",
+            "requestBody": {
+              "required": True,
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "required": ["template_url", "excel_data"],
+                    "properties": {
+                      "template_url": {
+                        "type": "string",
+                        "description": "Word模板文件的下载链接"
+                      },
+                      "excel_data": {
+                        "type": "string",
+                        "description": "Excel数据的JSON字符串"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "responses": {
+              "200": {
+                "description": "成功",
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "type": "object",
+                      "properties": {
+                        "success": {"type": "boolean", "description": "是否成功"},
+                        "message": {"type": "string", "description": "结果消息"},
+                        "replaced_count": {"type": "integer", "description": "替换的占位符数量"},
+                        "file_id": {"type": "string", "description": "生成文件的ID，用于下载"}
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "/download/{file_id}": {
+          "get": {
+            "summary": "下载替换后的Word文件",
+            "description": "根据fill返回的file_id下载生成的docx文件",
+            "operationId": "download_file",
+            "parameters": [
+              {
+                "name": "file_id",
+                "in": "path",
+                "required": True,
+                "schema": {"type": "string"},
+                "description": "fill接口返回的文件ID"
+              }
+            ],
+            "responses": {
+              "200": {
+                "description": "Word文件",
+                "content": {
+                  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {
+                    "schema": {"type": "string", "format": "binary"}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
