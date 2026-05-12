@@ -82,31 +82,30 @@ def normalize_data(excel_rows):
     # 特征：每行只有2个键，且有一个键在所有行中都相同
     if len(first_row) == 2:
         keys = list(first_row.keys())
-        # 找出所有行中不变的键
+        # 找出所有行中不变的键（跨行一致的键 = 字段名列的列名）
         common_keys = set(keys)
         for row in excel_rows[1:]:
             if isinstance(row, dict):
                 common_keys &= set(row.keys())
         
-        if len(common_keys) == 1 or (len(common_keys) == 2 and len(excel_rows) > 2):
-            # 这是被readExcel错误解析的竖向数据
-            # 不变的键对应的值是字段名，另一个键对应的值是字段值
+        if len(common_keys) >= 1 and len(excel_rows) > 2:
+            # 判断哪个键是"字段名"列：该键对应的值应该是变化的，且看起来像字段名
+            # 取common_keys中第一个键作为字段名列
+            name_key = list(common_keys)[0]
+            # 另一个键就是值列
+            val_key = keys[0] if keys[0] != name_key else keys[1]
+            
             result = {}
             for row in excel_rows:
                 if isinstance(row, dict):
-                    vals = list(row.values())
-                    ks = list(row.keys())
-                    # 找到哪个键在各行中变化（值列），哪个不变（字段名列）
-                    # 不变键的值 = 字段名，变化键的值 = 字段值
-                    # 尝试两种方式
-                    for i in range(2):
-                        field_name = str(row.get(ks[i], "")).strip()
-                        field_val = row.get(ks[1-i])
-                        if field_name and field_name != str(ks[i]) and field_name != str(ks[1-i]):
-                            # 验证：字段名不应该是列名本身
-                            result[field_name] = field_val
-                            break
-            if result:
+                    field_name = str(row.get(name_key, "")).strip()
+                    field_val = row.get(val_key)
+                    if field_name and field_val is not None:
+                        result[field_name] = field_val
+            
+            # 验证：如果字段名看起来合理（有中文或常见字段），则返回
+            chinese_count = sum(1 for k in result if any('\u4e00' <= c <= '\u9fff' for c in k))
+            if chinese_count > len(result) * 0.3:
                 return result
     
     # 情况3：标准横向格式
