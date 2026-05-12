@@ -60,12 +60,15 @@ class FillRequest(BaseModel):
 
 
 def normalize_data(excel_rows):
-    """将竖向格式(字段名/值)转为横向格式"""
+    """将各种格式的Excel数据转为标准横向字典"""
     if not excel_rows or not isinstance(excel_rows, list):
         return {}
     
-    # 检查是否竖向格式（每行有"字段名"和"值"两个键）
     first_row = excel_rows[0]
+    if not isinstance(first_row, dict):
+        return {}
+    
+    # 情况1：标准竖向格式（有"字段名"和"值"列）
     if "字段名" in first_row and "值" in first_row:
         result = {}
         for row in excel_rows:
@@ -75,15 +78,44 @@ def normalize_data(excel_rows):
                 result[key] = val
         return result
     
-    # 横向格式，合并多行数据
-    data = excel_rows[0]
-    for row in excel_rows[1:]:
+    # 情况2：readExcel把第二行当表头，导致竖向数据键值反转
+    # 特征：每行只有2个键，且有一个键在所有行中都相同
+    if len(first_row) == 2:
+        keys = list(first_row.keys())
+        # 找出所有行中不变的键
+        common_keys = set(keys)
+        for row in excel_rows[1:]:
+            if isinstance(row, dict):
+                common_keys &= set(row.keys())
+        
+        if len(common_keys) == 1 or (len(common_keys) == 2 and len(excel_rows) > 2):
+            # 这是被readExcel错误解析的竖向数据
+            # 不变的键对应的值是字段名，另一个键对应的值是字段值
+            result = {}
+            for row in excel_rows:
+                if isinstance(row, dict):
+                    vals = list(row.values())
+                    ks = list(row.keys())
+                    # 找到哪个键在各行中变化（值列），哪个不变（字段名列）
+                    # 不变键的值 = 字段名，变化键的值 = 字段值
+                    # 尝试两种方式
+                    for i in range(2):
+                        field_name = str(row.get(ks[i], "")).strip()
+                        field_val = row.get(ks[1-i])
+                        if field_name and field_name != str(ks[i]) and field_name != str(ks[1-i]):
+                            # 验证：字段名不应该是列名本身
+                            result[field_name] = field_val
+                            break
+            if result:
+                return result
+    
+    # 情况3：标准横向格式
+    data = {}
+    for row in excel_rows:
         if isinstance(row, dict):
             for k, v in row.items():
-                if k not in data and not k.startswith("__EMPTY") and not k.startswith("col_"):
+                if k and not k.startswith("__EMPTY") and not k.startswith("col_"):
                     data[k] = v
-    # 过滤无意义列
-    data = {k: v for k, v in data.items() if not k.startswith("__EMPTY") and not k.startswith("col_")}
     return data
 
 
