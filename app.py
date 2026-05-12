@@ -4,7 +4,7 @@ DocxFill API 服务 v4 - 支持参数化配置
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 import requests as req
 import json
 import re
@@ -12,6 +12,7 @@ import io
 import os
 import uuid
 from docx import Document
+from typing import Optional
 
 app = FastAPI(title="DocxFill API", description="Word模板占位符替换服务")
 
@@ -48,13 +49,22 @@ DEFAULT_FIELD_MAPPING = {"其他进项": "其他费用进项", "住宅用途占�
 class FillRequest(BaseModel):
     template_url: str
     excel_data: str
-    percent_fields: str = ""
-    thousand_sep_fields: str = ""
-    field_mapping: str = ""
+    percent_fields: Optional[str] = ""
+    thousand_sep_fields: Optional[str] = ""
+    field_mapping: Optional[str] = ""
+
+    @field_validator('percent_fields', 'thousand_sep_fields', 'field_mapping', mode='before')
+    @classmethod
+    def none_to_empty(cls, v):
+        return "" if v is None else v
 
 
 def parse_config(percent_str, thousand_str, mapping_str):
     """解析传入的配置字符串"""
+    percent_str = percent_str or ""
+    thousand_str = thousand_str or ""
+    mapping_str = mapping_str or ""
+
     percent_fields = DEFAULT_PERCENT_FIELDS.copy()
     if percent_str and percent_str.strip():
         percent_fields = {f.strip() for f in percent_str.split(",") if f.strip()}
