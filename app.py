@@ -60,7 +60,7 @@ class FillRequest(BaseModel):
 
 
 def normalize_data(excel_rows):
-    """将各种格式的Excel数据转为标准横向字典"""
+    """将各种格式的Excel数据转为标准横向字典，支持横向/竖向/键值反转格式"""
     if not excel_rows or not isinstance(excel_rows, list):
         return {}
     
@@ -80,19 +80,16 @@ def normalize_data(excel_rows):
     
     # 情况2：readExcel把第二行当表头，导致竖向数据键值反转
     # 特征：每行只有2个键，且有一个键在所有行中都相同
-    if len(first_row) == 2:
+    if len(first_row) == 2 and len(excel_rows) > 2:
         keys = list(first_row.keys())
-        # 找出所有行中不变的键（跨行一致的键 = 字段名列的列名）
+        # 找出所有行中不变的键
         common_keys = set(keys)
         for row in excel_rows[1:]:
             if isinstance(row, dict):
                 common_keys &= set(row.keys())
         
-        if len(common_keys) >= 1 and len(excel_rows) > 2:
-            # 判断哪个键是"字段名"列：该键对应的值应该是变化的，且看起来像字段名
-            # 取common_keys中第一个键作为字段名列
+        if len(common_keys) >= 1:
             name_key = list(common_keys)[0]
-            # 另一个键就是值列
             val_key = keys[0] if keys[0] != name_key else keys[1]
             
             result = {}
@@ -103,7 +100,7 @@ def normalize_data(excel_rows):
                     if field_name and field_val is not None:
                         result[field_name] = field_val
             
-            # 验证：如果字段名看起来合理（有中文或常见字段），则返回
+            # 验证：字段名合理性检查
             chinese_count = sum(1 for k in result if any('\u4e00' <= c <= '\u9fff' for c in k))
             if chinese_count > len(result) * 0.3:
                 return result
