@@ -240,6 +240,26 @@ async def download_file(file_id: str):
     return FileResponse(path, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", filename=f"filled.docx")
 
 
+@app.post("/upload")
+async def upload_docx(request: Request):
+    """接收base64编码的docx文件，保存后返回下载URL"""
+    try:
+        body = await request.json()
+        b64_content = body.get("content", "")
+        if not b64_content:
+            return {"success": False, "message": "缺少content参数", "file_id": "", "download_url": ""}
+        import base64
+        doc_bytes = base64.b64decode(b64_content)
+        fid = str(uuid.uuid4())
+        path = os.path.join(OUTPUT_DIR, f"{fid}.docx")
+        with open(path, "wb") as f:
+            f.write(doc_bytes)
+        download_url = f"https://docxfill-api-production.up.railway.app/download/{fid}"
+        return {"success": True, "message": "上传成功", "file_id": fid, "download_url": download_url}
+    except Exception as e:
+        return {"success": False, "message": f"上传失败: {str(e)}", "file_id": "", "download_url": ""}
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
