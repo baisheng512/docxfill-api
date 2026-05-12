@@ -1,7 +1,7 @@
 """
-DocxFill API 服务 v3 - 精简版
+DocxFill API 服务 v4 - 支持参数化配置
 """
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -25,18 +25,13 @@ app.add_middleware(
 OUTPUT_DIR = "/tmp/docxfill_output"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-
-class FillRequest(BaseModel):
-    template_url: str
-    excel_data: str
-
-
-PERCENT_FIELDS = {
+# 默认配置（当参数未传入时使用）
+DEFAULT_PERCENT_FIELDS = {
     "商业用途占比", "住宅用途占比", "城镇住宅用途占比", "商业用地占比", "城镇住宅用地占比",
     "建筑密度", "绿地率", "附加税率", "开发利润率"
 }
 
-THOUSAND_SEP_FIELDS = {
+DEFAULT_THOUSAND_SEP_FIELDS = {
     "总建筑面积", "计容建筑面积", "地下建筑面积", "建筑基底面积",
     "商业建筑面积", "一层商业建筑面积", "二层商业建筑面积", "住宅建筑面积",
     "房屋建筑安装工程费", "勘察设计和前期工程费", "宗地内基础设施建设费",
@@ -47,22 +42,47 @@ THOUSAND_SEP_FIELDS = {
     "开发利润1", "总地价"
 }
 
-FIELD_MAPPING = {
-    "其他进项": "其他费用进项",
-    "住宅用途占比": "城镇住宅用途占比",
-}
+DEFAULT_FIELD_MAPPING = {"其他进项": "其他费用进项", "住宅用途占比": "城镇住宅用途占比"}
 
 
-def format_value(key, value):
+class FillRequest(BaseModel):
+    template_url: str
+    excel_data: str
+    percent_fields: str = ""
+    thousand_sep_fields: str = ""
+    field_mapping: str = ""
+
+
+def parse_config(percent_str, thousand_str, mapping_str):
+    """解析传入的配置字符串"""
+    percent_fields = DEFAULT_PERCENT_FIELDS.copy()
+    if percent_str and percent_str.strip():
+        percent_fields = {f.strip() for f in percent_str.split(",") if f.strip()}
+
+    thousand_sep_fields = DEFAULT_THOUSAND_SEP_FIELDS.copy()
+    if thousand_str and thousand_str.strip():
+        thousand_sep_fields = {f.strip() for f in thousand_str.split(",") if f.strip()}
+
+    field_mapping = DEFAULT_FIELD_MAPPING.copy()
+    if mapping_str and mapping_str.strip():
+        for pair in mapping_str.split(","):
+            if "=" in pair:
+                k, v = pair.split("=", 1)
+                field_mapping[k.strip()] = v.strip()
+
+    return percent_fields, thousand_sep_fields, field_mapping
+
+
+def format_value(key, value, percent_fields, thousand_sep_fields):
     if value is None or (isinstance(value, str) and value.strip() == ""):
         return "资料受限"
-    if key in PERCENT_FIELDS:
+    if key in percent_fields:
         try:
             num = float(value)
             return f"{num}%" if num > 1 else f"{round(num * 100, 2)}%"
         except:
             return str(value)
-    if key in THOUSAND_SEP_FIELDS:
+    if key in thousand_sep_fields:
         try:
             num = float(value)
             return f"{int(num):,}" if num == int(num) else f"{num:,.2f}"
@@ -75,12 +95,12 @@ def format_value(key, value):
     return str(value)
 
 
-def resolve_key(key, data):
+def resolve_key(key, data, field_mapping):
     key_stripped = key.strip()
     if key_stripped in data:
         return key_stripped, data[key_stripped]
-    if key_stripped in FIELD_MAPPING:
-        mapped = FIELD_MAPPING[key_stripped]
+    if key_stripped in field_mapping:
+        mapped = field_mapping[key_stripped]
         if mapped in data:
             return mapped, data[mapped]
     for data_key in data:
@@ -89,38 +109,38 @@ def resolve_key(key, data):
     return None, None
 
 
-def replace_in_doc(doc, data):
+def replace_in_doc(doc, data, percent_fields, thousand_sep_fields, field_mapping):
     count = 0
     pattern = re.compile(r'\{\{(.+?)\}\}')
 
     for para in doc.paragraphs:
-        count += replace_in_para(para, data, pattern)
+        count += replace_in_para(para, data, pattern, percent_fields, thousand_sep_fields, field_mapping)
 
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
                 for para in cell.paragraphs:
-                    count += replace_in_para(para, data, pattern)
+                    count += replace_in_para(para, data, pattern, percent_fields, thousand_sep_fields, field_mapping)
 
     for section in doc.sections:
         for header in [section.header, section.first_page_header]:
             try:
                 if header and not header.is_linked_to_previous:
                     for para in header.paragraphs:
-                        count += replace_in_para(para, data, pattern)
+                        count += replace_in_para(para, data, pattern, percent_fields, thousand_sep_fields, field_mapping)
             except:
                 pass
         for footer in [section.footer, section.first_page_footer]:
             try:
                 if footer and not footer.is_linked_to_previous:
                     for para in footer.paragraphs:
-                        count += replace_in_para(para, data, pattern)
+                        count += replace_in_para(para, data, pattern, percent_fields, thousand_sep_fields, field_mapping)
             except:
                 pass
     return count
 
 
-def replace_in_para(para, data, pattern):
+def replace_in_para(para, data, pattern, percent_fields, thousand_sep_fields, field_mapping):
     count = 0
     if not pattern.search(para.text):
         return 0
@@ -130,20 +150,18 @@ def replace_in_para(para, data, pattern):
             continue
         for match in pattern.finditer(run.text):
             key = match.group(1)
-            resolved_key, value = resolve_key(key, data)
+            resolved_key, value = resolve_key(key, data, field_mapping)
             if resolved_key is not None:
-                formatted = format_value(resolved_key, value)
+                formatted = format_value(resolved_key, value, percent_fields, thousand_sep_fields)
                 run.text = run.text.replace('{{' + key + '}}', formatted)
                 count += 1
 
-    # 跨run处理
-    remaining = pattern.search(para.text)
-    if remaining:
-        count += handle_cross_run(para, data, pattern)
+    if pattern.search(para.text):
+        count += handle_cross_run(para, data, pattern, percent_fields, thousand_sep_fields, field_mapping)
     return count
 
 
-def handle_cross_run(para, data, pattern):
+def handle_cross_run(para, data, pattern, percent_fields, thousand_sep_fields, field_mapping):
     count = 0
     runs = para.runs
     if not runs:
@@ -164,10 +182,10 @@ def handle_cross_run(para, data, pattern):
         if s >= len(char_map) or e - 1 >= len(char_map):
             continue
         key = match.group(1)
-        resolved_key, value = resolve_key(key, data)
+        resolved_key, value = resolve_key(key, data, field_mapping)
         if resolved_key is None:
             continue
-        formatted = format_value(resolved_key, value)
+        formatted = format_value(resolved_key, value, percent_fields, thousand_sep_fields)
 
         fi = char_map[s]
         li = char_map[e - 1]
@@ -199,6 +217,11 @@ def handle_cross_run(para, data, pattern):
 
 @app.post("/fill")
 async def fill_template(request: FillRequest):
+    # 解析配置
+    percent_fields, thousand_sep_fields, field_mapping = parse_config(
+        request.percent_fields, request.thousand_sep_fields, request.field_mapping
+    )
+
     try:
         resp = req.get(request.template_url, timeout=30)
         resp.raise_for_status()
@@ -221,7 +244,7 @@ async def fill_template(request: FillRequest):
                     data[k] = v
 
     doc = Document(io.BytesIO(resp.content))
-    count = replace_in_doc(doc, data)
+    count = replace_in_doc(doc, data, percent_fields, thousand_sep_fields, field_mapping)
 
     file_id = str(uuid.uuid4())
     path = os.path.join(OUTPUT_DIR, f"{file_id}.docx")
@@ -237,7 +260,7 @@ async def download_file(file_id: str):
     path = os.path.join(OUTPUT_DIR, f"{file_id}.docx")
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="文件不存在")
-    return FileResponse(path, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", filename=f"filled.docx")
+    return FileResponse(path, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", filename="filled.docx")
 
 
 @app.post("/upload")
@@ -263,93 +286,3 @@ async def upload_docx(request: Request):
 @app.get("/health")
 async def health():
     return {"status": "ok"}
-
-
-@app.get("/coze-openapi.json")
-async def coze_openapi():
-    """返回Coze兼容的OpenAPI 3.0.0文档"""
-    return {
-      "openapi": "3.0.0",
-      "info": {
-        "title": "DocxFill API",
-        "description": "Word模板占位符替换服务，保留原格式",
-        "version": "1.0.0"
-      },
-      "servers": [
-        {"url": "https://docxfill-api-production.up.railway.app"}
-      ],
-      "paths": {
-        "/fill": {
-          "post": {
-            "summary": "替换Word模板占位符",
-            "description": "接收Word模板URL和Excel JSON数据，替换占位符后返回文件ID",
-            "operationId": "fill_template",
-            "requestBody": {
-              "required": True,
-              "content": {
-                "application/json": {
-                  "schema": {
-                    "type": "object",
-                    "required": ["template_url", "excel_data"],
-                    "properties": {
-                      "template_url": {
-                        "type": "string",
-                        "description": "Word模板文件的下载链接"
-                      },
-                      "excel_data": {
-                        "type": "string",
-                        "description": "Excel数据的JSON字符串"
-                      }
-                    }
-                  }
-                }
-              }
-            },
-            "responses": {
-              "200": {
-                "description": "成功",
-                "content": {
-                  "application/json": {
-                    "schema": {
-                      "type": "object",
-                      "properties": {
-                        "success": {"type": "boolean", "description": "是否成功"},
-                        "message": {"type": "string", "description": "结果消息"},
-                        "replaced_count": {"type": "integer", "description": "替换的占位符数量"},
-                        "file_id": {"type": "string", "description": "生成文件的ID，用于下载"}
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        },
-        "/download/{file_id}": {
-          "get": {
-            "summary": "下载替换后的Word文件",
-            "description": "根据fill返回的file_id下载生成的docx文件",
-            "operationId": "download_file",
-            "parameters": [
-              {
-                "name": "file_id",
-                "in": "path",
-                "required": True,
-                "schema": {"type": "string"},
-                "description": "fill接口返回的文件ID"
-              }
-            ],
-            "responses": {
-              "200": {
-                "description": "Word文件",
-                "content": {
-                  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {
-                    "schema": {"type": "string", "format": "binary"}
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
