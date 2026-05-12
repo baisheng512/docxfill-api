@@ -298,14 +298,28 @@ async def fill_template(request: FillRequest):
         return {"success": False, "message": f"下载模板失败: {str(e)}", "replaced_count": 0, "file_id": ""}
 
     try:
-        excel_rows = json.loads(request.excel_data)
+        excel_raw = json.loads(request.excel_data)
     except Exception as e:
         return {"success": False, "message": f"JSON解析失败: {str(e)}", "replaced_count": 0, "file_id": ""}
 
-    if not excel_rows or not isinstance(excel_rows, list):
-        return {"success": False, "message": "excel_data必须是非空数组", "replaced_count": 0, "file_id": ""}
-
-    data = normalize_data(excel_rows)
+    # 支持两种格式：
+    # 格式1：单Sheet数组 [{"字段名":"xx","值":"yy"}, ...]
+    # 格式2：多Sheet对象 {"Sheet1名称":[...], "Sheet2名称":[...]}
+    if isinstance(excel_raw, dict):
+        # 多Sheet格式，合并所有Sheet的数据
+        merged_data = {}
+        for sheet_name, sheet_rows in excel_raw.items():
+            if isinstance(sheet_rows, list) and sheet_rows:
+                sheet_data = normalize_data(sheet_rows)
+                # 同名字段后出现的Sheet覆盖前面的
+                merged_data.update(sheet_data)
+        data = merged_data
+    elif isinstance(excel_raw, list):
+        if not excel_raw:
+            return {"success": False, "message": "excel_data必须是非空数组", "replaced_count": 0, "file_id": ""}
+        data = normalize_data(excel_raw)
+    else:
+        return {"success": False, "message": "excel_data格式错误，必须是数组或对象", "replaced_count": 0, "file_id": ""}
 
     doc = Document(io.BytesIO(resp.content))
     count = replace_in_doc(doc, data, percent_fields, thousand_sep_fields, field_mapping)
