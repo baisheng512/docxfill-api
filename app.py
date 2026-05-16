@@ -14,6 +14,7 @@ import uuid
 import time
 import threading
 from docx import Document
+from docx.oxml.ns import qn
 from typing import Optional
 
 app = FastAPI(title="DocxFill API", description="Word模板占位符替换服务")
@@ -231,6 +232,16 @@ def replace_in_doc(doc, data, percent_fields, thousand_sep_fields, field_mapping
     return count
 
 
+def highlight_run(run):
+    """给run添加黄色高亮"""
+    rPr = run._element.get_or_add_rPr()
+    highlight = rPr.find(qn('w:highlight'))
+    if highlight is None:
+        highlight = run._element.makeelement(qn('w:highlight'), {})
+        rPr.append(highlight)
+    highlight.set(qn('w:val'), 'yellow')
+
+
 def replace_in_para(para, data, pattern, percent_fields, thousand_sep_fields, field_mapping):
     count = 0
     if not pattern.search(para.text):
@@ -245,6 +256,7 @@ def replace_in_para(para, data, pattern, percent_fields, thousand_sep_fields, fi
             if resolved_key is not None:
                 formatted = format_value(resolved_key, value, percent_fields, thousand_sep_fields)
                 run.text = run.text.replace('{{' + key + '}}', formatted)
+                highlight_run(run)
                 count += 1
 
     if pattern.search(para.text):
@@ -287,12 +299,14 @@ def handle_cross_run(para, data, pattern, percent_fields, thousand_sep_fields, f
             ps = s - rs
             pe = e - rs
             run.text = run.text[:ps] + formatted + run.text[pe:]
+            highlight_run(run)
             count += 1
         else:
             fr = runs[fi]
             rs = sum(len(runs[i].text) for i in range(fi))
             ps = s - rs
             fr.text = fr.text[:ps] + formatted
+            highlight_run(fr)
             for i in range(fi + 1, li):
                 runs[i].text = ''
             lr = runs[li]
