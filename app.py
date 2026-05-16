@@ -1,7 +1,6 @@
-好，下面是完整的修改后代码，全选删除后粘贴这个：
-
-```
-"""DocxFill API 服务 v4 - 支持参数化配置"""
+"""
+DocxFill API 服务 v4 - 支持参数化配置
+"""
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -44,9 +43,11 @@ def cleanup_old_files():
                     os.remove(fpath)
         except Exception:
             pass
+        # 每1小时清理一次
         time.sleep(3600)
 
 
+# 启动清理线程
 cleanup_thread = threading.Thread(target=cleanup_old_files, daemon=True)
 cleanup_thread.start()
 
@@ -103,8 +104,10 @@ def normalize_data(excel_rows):
         return result
     
     # 情况2：readExcel把第二行当表头，导致竖向数据键值反转
+    # 特征：每行只有2个键，且有一个键在所有行中都相同
     if len(first_row) == 2 and len(excel_rows) > 2:
         keys = list(first_row.keys())
+        # 找出所有行中不变的键
         common_keys = set(keys)
         for row in excel_rows[1:]:
             if isinstance(row, dict):
@@ -122,6 +125,7 @@ def normalize_data(excel_rows):
                     if field_name and field_val is not None:
                         result[field_name] = field_val
             
+            # 验证：字段名合理性检查
             chinese_count = sum(1 for k in result if any('\u4e00' <= c <= '\u9fff' for c in k))
             if chinese_count > len(result) * 0.3:
                 return result
@@ -304,6 +308,7 @@ def handle_cross_run(para, data, pattern, percent_fields, thousand_sep_fields, f
 
 @app.post("/fill")
 async def fill_template(request: FillRequest):
+    # 解析配置
     percent_fields, thousand_sep_fields, field_mapping = parse_config(
         request.percent_fields, request.thousand_sep_fields, request.field_mapping
     )
@@ -319,11 +324,16 @@ async def fill_template(request: FillRequest):
     except Exception as e:
         return {"success": False, "message": f"JSON解析失败: {str(e)}", "replaced_count": 0, "file_id": ""}
 
+    # 支持两种格式：
+    # 格式1：单Sheet数组 [{"字段名":"xx","值":"yy"}, ...]
+    # 格式2：多Sheet对象 {"Sheet1名称":[...], "Sheet2名称":[...]}
     if isinstance(excel_raw, dict):
+        # 多Sheet格式，合并所有Sheet的数据
         merged_data = {}
         for sheet_name, sheet_rows in excel_raw.items():
             if isinstance(sheet_rows, list) and sheet_rows:
                 sheet_data = normalize_data(sheet_rows)
+                # 同名字段后出现的Sheet覆盖前面的
                 merged_data.update(sheet_data)
         data = merged_data
     elif isinstance(excel_raw, list):
@@ -375,6 +385,7 @@ async def upload_docx(request: Request):
 
 @app.get("/health")
 async def health():
+    # 统计当前文件数和总大小
     file_count = 0
     total_size = 0
     for fname in os.listdir(OUTPUT_DIR):
@@ -413,6 +424,3 @@ async def cleanup_all():
             os.remove(fpath)
             removed += 1
     return {"success": True, "message": f"已清空，删除{removed}个文件"}
-```
-
-全选删除粘贴，然后点 **Commit changes** 就行。
